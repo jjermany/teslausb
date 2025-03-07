@@ -52,7 +52,7 @@ function has_files_to_archive() {
   (cd "$CAM_MOUNT"; find . -type f \( -path "./SavedClips/*" -o -path "./SentryClips/*" -o -path "./TeslaTrackMode/*" \) -printf '%P\n') > "$sentrylist"
   local sentry_count=$(wc -l < "$sentrylist")
   
-  if [[ "$sentry_count" -gt 0 || $(has_music_to_sync) -eq 1 ]]; then
+  if [[ "$sentry_count" -gt 0 ]]; then
     return 0
   else
     return 1
@@ -95,10 +95,14 @@ function archive_clips () {
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving encountered errors" error || log "Failed to send error notification"
   fi
 
+  /root/bin/disconnect-archive.sh
+}
+
+function sync_music_files () {
   if has_music_to_sync
   then
     log "Copying music..."
-    if copy_music_files
+    if /root/bin/copy-music.sh
     then
       log "Finished copying music."
       /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy completed successfully" finish || log "Failed to send music completion notification"
@@ -109,8 +113,6 @@ function archive_clips () {
   else
     log "No new music to sync, skipping music copy."
   fi
-
-  /root/bin/disconnect-archive.sh
 }
 
 while true; do
@@ -122,9 +124,9 @@ while true; do
   
   sleep "${ARCHIVE_DELAY:-20}"
   
-  if has_files_to_archive; then
+  if has_files_to_archive || has_music_to_sync; then
     /root/bin/awake_start || true
-    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Awake started for archiving" start || log "Failed to send awake start notification"
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Awake started for archiving and syncing" start || log "Failed to send awake start notification"
   fi
   
   if has_cam_disk; then
@@ -132,10 +134,11 @@ while true; do
   fi
   
   archive_clips
+  sync_music_files
   
-  if has_files_to_archive; then
+  if has_files_to_archive || has_music_to_sync; then
     /root/bin/awake_stop || true
-    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Awake stopped after archiving" finish || log "Failed to send awake stop notification"
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Awake stopped after archiving and syncing" finish || log "Failed to send awake stop notification"
   fi
   
   doubleblink
