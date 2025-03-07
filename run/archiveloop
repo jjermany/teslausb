@@ -88,8 +88,9 @@ function archive_clips () {
     log "Skipping archiving (no cam disk)"
   elif archive_teslacam_clips
   then
-    log "Finished archiving."
-    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving completed successfully" finish || log "Failed to send finish notification"
+    local archived_count=$(wc -l < /tmp/sentry_files)
+    log "Finished archiving. Archived $archived_count files."
+    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving completed: $archived_count file(s) archived." finish || log "Failed to send finish notification"
   else
     log "Archiving failed."
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving encountered errors" error || log "Failed to send error notification"
@@ -104,8 +105,9 @@ function sync_music_files () {
     log "Copying music..."
     if /root/bin/copy-music.sh
     then
-      log "Finished copying music."
-      /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy completed successfully" finish || log "Failed to send music completion notification"
+      local music_copied_count=$(grep -oP 'Number of regular files transferred: \K\d+' /tmp/rsyncmusiclog.txt || echo 0)
+      log "Finished copying music. $music_copied_count file(s) copied."
+      /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy completed: $music_copied_count file(s) copied." finish || log "Failed to send music completion notification"
     else
       log "Copying music failed."
       /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy failed" error || log "Failed to send music error notification"
