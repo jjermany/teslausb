@@ -49,16 +49,26 @@ fi
 
 function has_files_to_archive() {
   local sentrylist=/tmp/sentry_files
-  local music_files=$(find "$MUSIC_MOUNT" -type f | wc -l)
-
   (cd "$CAM_MOUNT"; find . -type f \( -path "./SavedClips/*" -o -path "./SentryClips/*" -o -path "./TeslaTrackMode/*" \) -printf '%P\n') > "$sentrylist"
-
   local sentry_count=$(wc -l < "$sentrylist")
-
-  if [[ "$sentry_count" -gt 0 || "$music_files" -gt 0 ]]; then
+  
+  if [[ "$sentry_count" -gt 0 || $(has_music_to_sync) -eq 1 ]]; then
     return 0
   else
     return 1
+  fi
+}
+
+function has_music_to_sync() {
+  if timeout 5 [ -d "$MUSIC_ARCHIVE_MOUNT" -a -d "$MUSIC_MOUNT" ]; then
+    # Check if files need to be copied or deleted to keep in sync
+    if ! rsync -run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT/" | grep -qE "^deleting|^>f"; then
+      return 0  # No sync needed
+    else
+      return 1  # Sync needed
+    fi
+  else
+    return 0  # No sync needed if mounts are not available
   fi
 }
 
@@ -85,7 +95,7 @@ function archive_clips () {
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving encountered errors" error || log "Failed to send error notification"
   fi
 
-  if timeout 5 [ -d "$MUSIC_ARCHIVE_MOUNT" -a -d "$MUSIC_MOUNT" ]
+  if has_music_to_sync
   then
     log "Copying music..."
     if copy_music_files
@@ -97,7 +107,7 @@ function archive_clips () {
       /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy failed" error || log "Failed to send music error notification"
     fi
   else
-    log "Music archive not configured or unreachable"
+    log "No new music to sync, skipping music copy."
   fi
 
   /root/bin/disconnect-archive.sh
