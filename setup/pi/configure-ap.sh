@@ -45,6 +45,11 @@ function nm_get_wifi_client_device () {
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
+  # Delete existing AP connection profile
+  if nmcli device show wlx9cefd5f6210e | grep -q "TESLAUSB_AP"; then
+    nmcli connection delete TESLAUSB_AP &> /dev/null || true
+  fi
+
   # Commenting out the line that creates ap0
   # iw dev "$WLAN" interface add ap0 type __ap || return 1
 
@@ -55,7 +60,6 @@ function nm_add_ap () {
   iw wlx9cefd5f6210e set power_save off || return 1  # Using external adapter
 
   # set up access point on the virtual interface using networkmanager
-  nmcli con delete TESLAUSB_AP &> /dev/null || true
   nmcli con add type wifi ifname wlx9cefd5f6210e mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1  # Using external adapter
   # don't set band and channel, because that is controlled by the $WLAN interface
   #nmcli con modify TESLAUSB_AP 802-11-wireless.band bg
@@ -74,7 +78,6 @@ then
   # iw dev $WLAN interface add ap0 type __ap  # Commenting out ap0 creation
   iw "$WLAN" set power_save off
   iw wlx9cefd5f6210e set power_save off  # Using external adapter
-  sleep 5  # Wait for 5 seconds
   nmcli con up TESLAUSB_AP
 fi
 
