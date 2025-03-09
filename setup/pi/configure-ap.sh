@@ -50,8 +50,8 @@ function nm_add_ap () {
     nmcli connection delete TESLAUSB_AP &> /dev/null || true
   fi
 
-  # Commenting out the line that creates ap0
-  # iw dev "$WLAN" interface add ap0 type __ap || return 1
+  # Uncommenting the line that creates ap0
+  iw dev "$WLAN" interface add ap0 type __ap || return 1
 
   # turn off power savings for both interfaces since they use
   # the same underlying hardware, and we don't want one to go
