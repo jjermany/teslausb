@@ -36,19 +36,29 @@ if [ -z "${ARCHIVE_SERVER+x}" ]; then
 fi
 
 function has_files_to_archive() {
+  log "Checking for files to archive..."
   local sentrylist=/tmp/sentry_files
-  ensure_mountpoint_is_mounted_with_retry "$CAM_MOUNT" || return 1
+  ensure_mountpoint_is_mounted_with_retry "$CAM_MOUNT" || { log "Failed to mount $CAM_MOUNT for check"; return 1; }
   (cd "$CAM_MOUNT"; find . -type f \( -path "./SavedClips/*" -o -path "./SentryClips/*" -o -path "./TeslaTrackMode/*" \) -printf '%P\n') > "$sentrylist"
   local sentry_count=$(wc -l < "$sentrylist")
+  log "Found $sentry_count files to archive."
   [[ "$sentry_count" -gt 0 ]]
 }
 
 function has_music_to_sync() {
+  log "Checking for music to sync..."
   if timeout 5 [ -d "$MUSIC_ARCHIVE_MOUNT" -a -d "$MUSIC_MOUNT" ]; then
-    # Dry-run rsync; return 0 (true) if changes are detected
-    rsync -run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT/" | grep -qE "^deleting|^>f"
+    rsync -run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT/" > /tmp/rsync_check.log 2>&1
+    if grep -qE "^deleting|^>f" /tmp/rsync_check.log; then
+      log "Music sync needed."
+      return 0
+    else
+      log "No music sync needed."
+      return 1
+    fi
   else
-    return 1  # No sync if mounts aren't available
+    log "Music mounts not available, no sync needed."
+    return 1
   fi
 }
 
@@ -139,33 +149,36 @@ function archive_clips () {
   if ! /root/bin/connect-archive.sh; then
     log "Couldn't connect archive, skipping archive step"
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Couldn't connect to archive" error || log "Failed to send error notification"
-    return 1
+    return 1  # No work done
   fi
 
   if ! has_cam_disk; then
     log "Skipping archiving (no cam disk)"
     /root/bin/disconnect-archive.sh
-    return 0
+    return 1  # No work done
   elif ! has_files_to_archive; then
     log "No new clips to archive."
-    return 0
+    /root/bin/disconnect-archive.sh
+    return 1  # No work done
   else
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving started" start || log "Failed to send start notification"
     if archive_teslacam_clips; then
       local archived_count=$(wc -l < /tmp/sentry_files)
       log "Finished archiving. Archived $archived_count files."
       /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving completed: $archived_count file(s) archived." finish || log "Failed to send finish notification"
-      return 0
+      /root/bin/disconnect-archive.sh
+      return 0  # Work done
     else
       log "Archiving failed."
       /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Archiving encountered errors" error || log "Failed to send error notification"
       /root/bin/disconnect-archive.sh
-      return 1
+      return 1  # No work done
     fi
   fi
 }
 
 function sync_music_files () {
+  log "Checking music sync..."
   if timeout 5 [ -d "$MUSIC_ARCHIVE_MOUNT" -a -d "$MUSIC_MOUNT" ]; then
     if has_music_to_sync; then
       log "Copying music..."
@@ -176,27 +189,28 @@ function sync_music_files () {
         /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy completed: $music_copied_count file(s) copied." finish || log "Failed to send music completion notification"
         trim_free_space "$MUSIC_MOUNT"
         unmount_music_file
-        return 0
+        /root/bin/disconnect-archive.sh
+        return 0  # Work done
       else
         log "Copying music failed."
         /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Music copy failed" error || log "Failed to send music error notification"
         unmount_music_file
         /root/bin/disconnect-archive.sh
-        return 1
+        return 1  # No work done
       fi
     else
       log "No new music to sync, skipping music copy."
       /root/bin/disconnect-archive.sh
-      return 0
+      return 1  # No work done
     fi
   else
     log "Music archive not configured or unreachable"
     /root/bin/disconnect-archive.sh
-    return 0
+    return 1  # No work done
   fi
 }
 
-# Stub functions from original script (assuming they exist elsewhere)
+# Stub functions (replace with actual implementations)
 function slowblink () { echo "slowblink"; }
 function fastblink () { echo "fastblink"; }
 function doubleblink () { echo "doubleblink"; }
@@ -214,21 +228,30 @@ while true; do
   set_time
   sleep "${ARCHIVE_DELAY:-20}"
 
-  # Track if any work was done
   local did_work=false
 
   if archive_clips; then
     did_work=true
+    log "Archive work completed."
+  else
+    log "No archive work done."
   fi
+
   if sync_music_files; then
     did_work=true
+    log "Music sync work completed."
+  else
+    log "No music sync work done."
   fi
 
   if $did_work; then
-    /root/bin/awake_start || true
+    log "Running awake_start and awake_stop due to work being done."
+    /root/bin/awake_start || log "awake_start failed"
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Awake started for archiving and syncing" start || log "Failed to send awake start notification"
-    /root/bin/awake_stop || true
+    /root/bin/awake_stop || log "awake_stop failed"
     /root/bin/send-push-message "$NOTIFICATION_TITLE:" "Awake stopped after archiving and syncing" finish || log "Failed to send awake stop notification"
+  else
+    log "Skipping awake_start and awake_stop; no work done."
   fi
 
   doubleblink
