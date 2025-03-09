@@ -210,20 +210,31 @@ function ensure_music_file_is_mounted () {
   log "🚨 Ensuring music storage is mounted..."
   disconnect_usb_drives_from_host
 
-  # Retry mount up to 3 times if it fails initially
-  for i in {1..3}; do
-    mount /mnt/musicarchive && break
-    log "⚠️ ERROR: Retrying mount attempt #$i..."
-    sleep 3
-  done
-
-  mount /mnt/music || log "⚠️ ERROR: Could not manually mount /mnt/music!"
-
-  # ✅ NEW: Wait 3 seconds to allow mount to stabilize
-  log "⏳ Waiting 3 seconds to allow mount to stabilize..."
+  # Mount music archive
+  mount /mnt/musicarchive
+  log "⏳ Waiting 3 seconds after mounting /mnt/musicarchive to stabilize..."
   sleep 3
 
-  # Verify the mount worked before proceeding
+  # Check if /mnt/musicarchive mounted successfully
+  if findmnt /mnt/musicarchive; then
+    log "✅ Music archive successfully mounted."
+  else
+    log "⚠️ ERROR: Initial mount failed. Retrying..."
+    for i in {1..2}; do
+      mount /mnt/musicarchive
+      log "⏳ Waiting 3 seconds after retry attempt #$i for /mnt/musicarchive..."
+      sleep 3
+      findmnt /mnt/musicarchive && break
+      log "⚠️ ERROR: Retrying mount attempt #$i for /mnt/musicarchive..."
+    done
+  fi
+
+  # Mount main music storage
+  mount /mnt/music
+  log "⏳ Waiting 3 seconds after mounting /mnt/music to stabilize..."
+  sleep 3
+
+  # Final check before proceeding
   if ! findmnt "$MUSIC_MOUNT" || ! findmnt "$MUSIC_ARCHIVE_MOUNT"; then
     log "⚠️ ERROR: Music storage is still missing! Skipping sync."
   else
