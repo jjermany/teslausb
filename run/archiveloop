@@ -207,14 +207,23 @@ function ensure_cam_file_is_mounted () {
 }
 
 function ensure_music_file_is_mounted () {
-  log "🚨 Forcing manual mount of music storage..."
+  log "🚨 Ensuring music storage is mounted..."
   disconnect_usb_drives_from_host
 
-  # Manually mount instead of using ensure_mountpoint_is_mounted_with_retry
-  mount /mnt/musicarchive || log "⚠️ ERROR: Could not manually mount /mnt/musicarchive!"
+  # Retry mount up to 3 times if it fails initially
+  for i in {1..3}; do
+    mount /mnt/musicarchive && break
+    log "⚠️ ERROR: Retrying mount attempt #$i..."
+    sleep 3
+  done
+
   mount /mnt/music || log "⚠️ ERROR: Could not manually mount /mnt/music!"
 
-  # Now check if they actually mounted
+  # ✅ NEW: Wait 3 seconds to allow mount to stabilize
+  log "⏳ Waiting 3 seconds to allow mount to stabilize..."
+  sleep 3
+
+  # Verify the mount worked before proceeding
   if ! findmnt "$MUSIC_MOUNT" || ! findmnt "$MUSIC_ARCHIVE_MOUNT"; then
     log "⚠️ ERROR: Music storage is still missing! Skipping sync."
   else
