@@ -74,6 +74,7 @@ then
   # iw dev $WLAN interface add ap0 type __ap  # Commenting out ap0 creation
   iw "$WLAN" set power_save off
   iw wlx9cefd5f6210e set power_save off  # Using external adapter
+  sleep 5  # Wait for 5 seconds
   nmcli con up TESLAUSB_AP
 fi
 
