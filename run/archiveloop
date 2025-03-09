@@ -887,7 +887,10 @@ if grep -q "[^[:space:]]" /tmp/sentry_files 2>/dev/null; then
 fi
 
 # Run a dry-run check for music sync BEFORE waking the car
-rsync_log=$(rsync -rum --dry-run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT" 2>&1)
+rsync_log=$(rsync -avum --dry-run --ignore-existing "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT/" 2>&1)
+log "Rsync Dry-Run Debug Output:"
+log "$rsync_log"
+
 if echo "$rsync_log" | grep -qE "deleting|>\s*f"; then
   log "Music sync required: Changes detected before wake-up."
   log "$rsync_log"
