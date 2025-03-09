@@ -43,8 +43,11 @@ function nm_add_ap() {
   # Delete any existing AP connection profile
   nmcli connection delete TESLAUSB_AP &> /dev/null || true
 
-  # Create the AP connection profile using the internal adapter (wlan0)
-  nmcli con add type wifi ifname "$WLAN" mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
+  # Ensure the external adapter is not connected to any network
+  nmcli device disconnect wlan1 &> /dev/null || true
+
+  # Create the AP connection profile using the external adapter (wlan1)
+  nmcli con add type wifi ifname wlan1 mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$AP_PASS" || return 1
   IP=${AP_IP:-"192.168.66.1"}
@@ -74,3 +77,5 @@ if systemctl --quiet is-enabled NetworkManager.service; then
   log_progress "AP configured"
   exit 0
 fi
+
+# ... (rest of the script - hostapd section can be removed or kept as a fallback) ...
