@@ -210,37 +210,17 @@ function ensure_music_file_is_mounted () {
   log "🚨 Ensuring music storage is mounted..."
   disconnect_usb_drives_from_host
 
-  # Mount music archive
-  mount /mnt/musicarchive
-  log "⏳ Waiting 3 seconds after mounting /mnt/musicarchive to stabilize..."
-  sleep 3
-
-  # Check if /mnt/musicarchive mounted successfully
-  if findmnt /mnt/musicarchive; then
-    log "✅ Music archive successfully mounted."
-  else
-    log "⚠️ ERROR: Initial mount failed. Retrying..."
-    for i in {1..2}; do
-      mount /mnt/musicarchive
-      log "⏳ Waiting 3 seconds after retry attempt #$i for /mnt/musicarchive..."
-      sleep 3
-      findmnt /mnt/musicarchive && break
-      log "⚠️ ERROR: Retrying mount attempt #$i for /mnt/musicarchive..."
-    done
-  fi
-
-  # Mount main music storage
-  mount /mnt/music
-  log "⏳ Waiting 3 seconds after mounting /mnt/music to stabilize..."
-  sleep 3
+  ensure_mountpoint_is_mounted_with_retry "$MUSIC_ARCHIVE_MOUNT"
+  ensure_mountpoint_is_mounted_with_retry "$MUSIC_MOUNT"
 
   # Final check before proceeding
-  if ! findmnt "$MUSIC_MOUNT" || ! findmnt "$MUSIC_ARCHIVE_MOUNT"; then
+  if ! findmnt "$MUSIC_ARCHIVE_MOUNT" || ! findmnt "$MUSIC_MOUNT"; then
     log "⚠️ ERROR: Music storage is still missing! Skipping sync."
   else
-    log "✅ Music storage mounted successfully."
+    log "✅ Music storage is fully mounted and ready."
   fi
 }
+
 
 function unmount_mount_point () {
   local mount_point="$1"
@@ -906,37 +886,13 @@ then
 
   set_time
 
-log "Checking if files need archiving or music sync..."
-should_awake=false
+  sleep "${ARCHIVE_DELAY:-20}"  # 🟢 Delay BEFORE checking Sentry Mode
 
-# Check if there are new TeslaCam files to archive
-if grep -q "[^[:space:]]" /tmp/sentry_files 2>/dev/null; then
-  log "Files detected for archiving. Awake sequence will be triggered."
-  should_awake=true
-fi
+  /root/bin/awake_start || true  # 🟢 Now this runs AFTER waiting
 
-# Run a dry-run check for music sync BEFORE waking the car
-rsync_log=$(rsync -avum --dry-run --ignore-existing "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT/" 2>&1)
-log "Rsync Dry-Run Debug Output:"
-log "$rsync_log"
-
-if echo "$rsync_log" | grep -qE "deleting|>\s*f"; then
-  log "Music sync required: Changes detected before wake-up."
-  log "$rsync_log"
-  should_awake=true
-else
-  log "No music changes detected before wake-up."
-fi
-
-# Only wake the car if there's something to do
-if [ "$should_awake" = true ]; then
-  log "Waking car to process detected changes..."
-  /root/bin/awake_start || true
   archive_clips
+
   /root/bin/awake_stop || true
-else
-  log "No files need archiving or syncing. Skipping awake sequence."
-fi
 
   doubleblink
 
@@ -955,9 +911,9 @@ do
 
   set_time
 
-  /root/bin/awake_start || true
+  sleep "${ARCHIVE_DELAY:-20}"  # 🟢 Delay BEFORE checking Sentry Mode
 
-  sleep "${ARCHIVE_DELAY:-20}"
+  /root/bin/awake_start || true  # 🟢 Now this runs AFTER waiting
 
   # take a snapshot before archive_clips starts deleting files
   if has_cam_disk
