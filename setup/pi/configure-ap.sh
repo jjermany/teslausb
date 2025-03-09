@@ -45,21 +45,18 @@ function nm_get_wifi_client_device () {
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
-  if ! iw dev ap0 info &> /dev/null
-  then
-    # create additional virtual interface for the wifi device
-    iw dev "$WLAN" interface add ap0 type __ap || return 1
-  fi
+  # Commenting out the line that creates ap0
+  # iw dev "$WLAN" interface add ap0 type __ap || return 1
 
   # turn off power savings for both interfaces since they use
   # the same underlying hardware, and we don't want one to go
   # into power save mode just because the other is idle
   iw "$WLAN" set power_save off || return 1
-  iw ap0 set power_save off || return 1
+  iw wlx9cefd5f6210e set power_save off || return 1  # Using external adapter
 
   # set up access point on the virtual interface using networkmanager
   nmcli con delete TESLAUSB_AP &> /dev/null || true
-  nmcli con add type wifi ifname ap0 mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
+  nmcli con add type wifi ifname wlx9cefd5f6210e mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1  # Using external adapter
   # don't set band and channel, because that is controlled by the $WLAN interface
   #nmcli con modify TESLAUSB_AP 802-11-wireless.band bg
   #nmcli con modify TESLAUSB_AP 802-11-wireless.channel 6
@@ -74,9 +71,9 @@ function nm_add_ap () {
 
 if [ "\$IFACE" = "$WLAN" ]
 then
-  iw dev $WLAN interface add ap0 type __ap
+  # iw dev $WLAN interface add ap0 type __ap  # Commenting out ap0 creation
   iw "$WLAN" set power_save off
-  iw ap0 set power_save off
+  iw wlx9cefd5f6210e set power_save off  # Using external adapter
   nmcli con up TESLAUSB_AP
 fi
 
@@ -117,7 +114,7 @@ fi
 if ! grep -q id_str /etc/wpa_supplicant/wpa_supplicant.conf
 then
   IP=${AP_IP:-"192.168.66.1"}
-  NET=$(echo -n "$IP" | sed -e 's/\.[0-9]\{1,3\}$//')
+  NET=$(echo -n "$IP" | sed -e 's/\.\{1,3\}$//')
 
   # install required packages
   log_progress "installing dnsmasq and hostapd"
@@ -127,71 +124,73 @@ then
   # create udev rule
   MAC="$(cat /sys/class/net/wlan0/address)"
   cat <<- EOF > /etc/udev/rules.d/70-persistent-net.rules
-	SUBSYSTEM=="ieee80211", ACTION=="add|change", ATTR{macaddress}=="$MAC", KERNEL=="phy0", \
-	RUN+="/sbin/iw phy phy0 interface add ap0 type __ap", \
-	RUN+="/bin/ip link set ap0 address $MAC"
-	EOF
+SUBSYSTEM=="ieee80211", ACTION=="add|change", ATTR{macaddress}=="$MAC", KERNEL=="phy0", \
+# Removing ap0 creation
+# RUN+="/sbin/iw phy phy0 interface add ap0 type __ap", \
+# RUN+="/bin/ip link set ap0 address $MAC"
+EOF
 
   # configure dnsmasq
   cat <<- EOF > /etc/dnsmasq.conf
-	interface=lo,ap0
-	no-dhcp-interface=lo,wlan0
-	bind-interfaces
-	bogus-priv
-	dhcp-range=${NET}.10,${NET}.254,12h
-	# don't configure a default route, we're not a router
-	dhcp-option=3
-	EOF
+interface=lo,wlx9cefd5f6210e  # Using external adapter
+no-dhcp-interface=lo,wlan0
+bind-interfaces
+bogus-priv
+dhcp-range=${NET}.10,${NET}.254,12h
+# don't configure a default route, we're not a router
+dhcp-option=3
+EOF
 
   # configure hostapd
   cat <<- EOF > /etc/hostapd/hostapd.conf
-	ctrl_interface=/var/run/hostapd
-	ctrl_interface_group=0
-	interface=ap0
-	driver=nl80211
-	ssid=${AP_SSID}
-	hw_mode=g
-	channel=11
-	wmm_enabled=0
-	macaddr_acl=0
-	auth_algs=1
-	wpa=2
-	wpa_passphrase=${AP_PASS}
-	wpa_key_mgmt=WPA-PSK
-	wpa_pairwise=TKIP CCMP
-	rsn_pairwise=CCMP
-	EOF
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
+interface=wlx9cefd5f6210e  # Using external adapter
+driver=nl80211
+ssid=${AP_SSID}
+hw_mode=g
+# Removing explicit channel setting
+# channel=6
+wmm_enabled=0
+macaddr_acl=0
+auth_algs=1
+wpa=2
+wpa_passphrase=${AP_PASS}
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP CCMP
+rsn_pairwise=CCMP
+EOF
   cat <<- EOF > /etc/default/hostapd
-	DAEMON_CONF="/etc/hostapd/hostapd.conf"
-	EOF
+DAEMON_CONF="/etc/hostapd/hostapd.conf"
+EOF
 
   # define network interfaces. Note use of 'AP1' name, defined in wpa_supplication.conf below
   cat <<- EOF > /etc/network/interfaces
-	source-directory /etc/network/interfaces.d
+source-directory /etc/network/interfaces.d
 
-	auto lo
-	auto ap0
-	auto wlan0
-	iface lo inet loopback
+auto lo
+auto wlx9cefd5f6210e  # Using external adapter
+auto wlan0
+iface lo inet loopback
 
-	allow-hotplug ap0
-	iface ap0 inet static
-	    address ${IP}
-	    netmask 255.255.255.0
-	    hostapd /etc/hostapd/hostapd.conf
+allow-hotplug wlx9cefd5f6210e  # Using external adapter
+iface wlx9cefd5f6210e inet static  # Using external adapter
+    address ${IP}
+    netmask 255.255.255.0
+    hostapd /etc/hostapd/hostapd.conf
 
-	allow-hotplug wlan0
-	iface wlan0 inet manual
-	    wpa-roam /etc/wpa_supplicant/wpa_supplicant.conf
-	iface AP1 inet dhcp
-	EOF
+allow-hotplug wlan0
+iface wlan0 inet manual
+    wpa-roam /etc/wpa_supplicant/wpa_supplicant.conf
+iface AP1 inet dhcp
+EOF
 
   # For bullseye it is apparently necessary to explicitly disable wpa_supplicant for the ap0 interface
   cat <<- EOF >> /etc/dhcpcd.conf
-	# disable wpa_supplicant for the ap0 interface
-	interface ap0
-	nohook wpa_supplicant
-	EOF
+# disable wpa_supplicant for the ap0 interface
+interface wlx9cefd5f6210e  # Using external adapter
+nohook wpa_supplicant
+EOF
 
   if [ ! -L /var/lib/misc ]
   then
@@ -214,3 +213,5 @@ then
 else
   log_progress "AP mode already configured"
 fi
+
+}
