@@ -45,44 +45,23 @@ function nm_get_wifi_client_device () {
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
-  # Delete existing AP connection profile
-  if nmcli device show wlx9cefd5f6210e | grep -q "TESLAUSB_AP"; then
-    nmcli connection delete TESLAUSB_AP &> /dev/null || true
-  fi
+  # Delete any existing AP connection profile
+  nmcli connection delete TESLAUSB_AP &> /dev/null || true
 
-  # Uncommenting the line that creates ap0
-  iw dev "$WLAN" interface add ap0 type __ap || return 1
+  # Ensure the external adapter is not connected to any network
+  nmcli device disconnect wlx9cefd5f6210e &> /dev/null || true
 
-  # turn off power savings for both interfaces since they use
-  # the same underlying hardware, and we don't want one to go
-  # into power save mode just because the other is idle
-  iw "$WLAN" set power_save off || return 1
-  iw wlx9cefd5f6210e set power_save off || return 1  # Using external adapter
-
-  # set up access point on the virtual interface using networkmanager
-  nmcli con add type wifi ifname wlx9cefd5f6210e mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1  # Using external adapter
-  # don't set band and channel, because that is controlled by the $WLAN interface
-  #nmcli con modify TESLAUSB_AP 802-11-wireless.band bg
-  #nmcli con modify TESLAUSB_AP 802-11-wireless.channel 6
+  # Create the AP connection profile
+  nmcli con add type wifi ifname wlx9cefd5f6210e mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$AP_PASS" || return 1
   IP=${AP_IP:-"192.168.66.1"}
   nmcli con modify TESLAUSB_AP ipv4.addr "$IP/24" || return 1
   nmcli con modify TESLAUSB_AP ipv4.method shared || return 1
   nmcli con modify TESLAUSB_AP ipv6.method disabled || return 1
-  cat > /etc/network/if-up.d/teslausb-ap << EOF
-#!/bin/bash
 
-if [ "\$IFACE" = "$WLAN" ]
-then
-  # iw dev $WLAN interface add ap0 type __ap  # Commenting out ap0 creation
-  iw "$WLAN" set power_save off
-  iw wlx9cefd5f6210e set power_save off  # Using external adapter
-  nmcli con up TESLAUSB_AP
-fi
-
-EOF
-  chmod a+x /etc/network/if-up.d/teslausb-ap || return 1
+  # Activate the AP connection profile
+  nmcli con up TESLAUSB_AP || return 1
 }
 
 
