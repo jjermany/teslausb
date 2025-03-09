@@ -886,10 +886,20 @@ if [ -s /tmp/sentry_files ]; then
   should_awake=true
 fi
 
-# Check if music needs syncing
+# Check if music needs syncing using rsync log
 if grep -qE "Copied [1-9][0-9]* file|Deleted [1-9][0-9]* file" /tmp/rsyncmusiclog.txt; then
-  log "Music sync required. Awake sequence will be triggered."
+  log "Music sync required based on previous sync log."
   should_awake=true
+else
+  # If the log doesn't show changes, run a real-time rsync check
+  rsync_log=$(rsync -rum --dry-run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT" 2>&1)
+  if echo "$rsync_log" | grep -qE "deleting|>\s*f"; then
+    log "Music sync required: Changes detected live."
+    log "$rsync_log"
+    should_awake=true
+  else
+    log "No music changes detected."
+  fi
 fi
 
 # Only wake the car if there's something to do
