@@ -881,36 +881,30 @@ log "Checking if files need archiving or music sync..."
 should_awake=false
 
 # Check if there are new TeslaCam files to archive
-if [ -s /tmp/sentry_files ]; then
+if grep -q "[^[:space:]]" /tmp/sentry_files 2>/dev/null; then
   log "Files detected for archiving. Awake sequence will be triggered."
   should_awake=true
 fi
 
-# Check if music needs syncing using rsync log
-if grep -qE "Copied [1-9][0-9]* file|Deleted [1-9][0-9]* file" /tmp/rsyncmusiclog.txt; then
-  log "Music sync required based on previous sync log."
+# Run a dry-run check for music sync BEFORE waking the car
+rsync_log=$(rsync -rum --dry-run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT" 2>&1)
+if echo "$rsync_log" | grep -qE "deleting|>\s*f"; then
+  log "Music sync required: Changes detected before wake-up."
+  log "$rsync_log"
   should_awake=true
 else
-  # If the log doesn't show changes, run a real-time rsync check
-  rsync_log=$(rsync -rum --dry-run --delete "$MUSIC_ARCHIVE_MOUNT/" "$MUSIC_MOUNT" 2>&1)
-  if echo "$rsync_log" | grep -qE "deleting|>\s*f"; then
-    log "Music sync required: Changes detected live."
-    log "$rsync_log"
-    should_awake=true
-  else
-    log "No music changes detected."
-  fi
+  log "No music changes detected before wake-up."
 fi
 
 # Only wake the car if there's something to do
 if [ "$should_awake" = true ]; then
+  log "Waking car to process detected changes..."
   /root/bin/awake_start || true
   archive_clips
   /root/bin/awake_stop || true
 else
   log "No files need archiving or syncing. Skipping awake sequence."
 fi
-
 
   doubleblink
 
