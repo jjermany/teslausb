@@ -207,10 +207,19 @@ function ensure_cam_file_is_mounted () {
 }
 
 function ensure_music_file_is_mounted () {
-  log "Ensuring music backing file is mounted..."
+  log "🚨 Forcing manual mount of music storage..."
   disconnect_usb_drives_from_host
-  ensure_mountpoint_is_mounted_with_retry "$MUSIC_MOUNT"
-  log "Ensured music drive is mounted."
+
+  # Manually mount instead of using ensure_mountpoint_is_mounted_with_retry
+  mount /mnt/musicarchive || log "⚠️ ERROR: Could not manually mount /mnt/musicarchive!"
+  mount /mnt/music || log "⚠️ ERROR: Could not manually mount /mnt/music!"
+
+  # Now check if they actually mounted
+  if ! findmnt "$MUSIC_MOUNT" || ! findmnt "$MUSIC_ARCHIVE_MOUNT"; then
+    log "⚠️ ERROR: Music storage is still missing! Skipping sync."
+  else
+    log "✅ Music storage mounted successfully."
+  fi
 }
 
 function unmount_mount_point () {
