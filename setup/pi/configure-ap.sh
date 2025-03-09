@@ -2,33 +2,28 @@
 
 # based on https://blog.thewalr.us/2017/09/26/raspberry-pi-zero-w-simultaneous-ap-and-managed-mode-wifi/
 
-function log_progress () {
-  if declare -F setup_progress > /dev/null
-  then
+function log_progress() {
+  if declare -F setup_progress > /dev/null; then
     setup_progress "configure-ap: $1"
   else
     echo "configure-ap: $1"
   fi
 }
 
-if [ -z "${AP_SSID+x}" ]
-then
+if [ -z "${AP_SSID+x}" ]; then
   log_progress "AP_SSID not set"
   exit 1
 fi
 
-if [ -z "${AP_PASS+x}" ] || [ "$AP_PASS" = "password" ] || (( ${#AP_PASS} < 8))
-then
+if [ -z "${AP_PASS+x}" ] || [ "$AP_PASS" = "password" ] || (( ${#AP_PASS} < 8)); then
   log_progress "AP_PASS not set, not changed from default, or too short"
   exit 1
 fi
 
-function nm_get_wifi_client_device () {
-  for i in {1..5}
-  do
+function nm_get_wifi_client_device() {
+  for i in {1..5}; do
     WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -c 17-)"
-    if [ -n "$WLAN" ]
-    then
+    if [ -n "$WLAN" ]; then
       break;
     fi
     log_progress "Waiting for wifi interface to come back up"
@@ -42,17 +37,14 @@ function nm_get_wifi_client_device () {
   return 1
 }
 
-function nm_add_ap () {
+function nm_add_ap() {
   nm_get_wifi_client_device || return 1
 
   # Delete any existing AP connection profile
   nmcli connection delete TESLAUSB_AP &> /dev/null || true
 
-  # Ensure the external adapter is not connected to any network
-  nmcli device disconnect wlx9cefd5f6210e &> /dev/null || true
-
-  # Create the AP connection profile
-  nmcli con add type wifi ifname wlx9cefd5f6210e mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
+  # Create the AP connection profile using the internal adapter (wlan0)
+  nmcli con add type wifi ifname "$WLAN" mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$AP_PASS" || return 1
   IP=${AP_IP:-"192.168.66.1"}
@@ -64,21 +56,17 @@ function nm_add_ap () {
   nmcli con up TESLAUSB_AP || return 1
 }
 
-
-if systemctl --quiet is-enabled NetworkManager.service
-then
+if systemctl --quiet is-enabled NetworkManager.service; then
   # force-install iw because otherwise it will get autoremoved when
   # alsa-utils is removed later
   apt-get -y --force-yes install iw || return 1
-  if ! nm_add_ap
-  then
+  if ! nm_add_ap; then
     # Network Manager won't allow adding connections when started with a
     # read-only root fs, even if the root fs is not writeable, so try
     # again after restarting Network Manager
     log_progress "Retrying after restarting Network Manager"
     systemctl restart NetworkManager.service
-    if ! nm_add_ap
-    then
+    if ! nm_add_ap; then
       log_progress "STOP: Failed to configure AP"
       exit 1
     fi
@@ -86,115 +74,3 @@ then
   log_progress "AP configured"
   exit 0
 fi
-
-
-if [ ! -e /etc/wpa_supplicant/wpa_supplicant.conf ]
-then
-  log_progress "No wpa_supplicant, skipping AP setup."
-  exit 0
-fi
-
-if ! grep -q id_str /etc/wpa_supplicant/wpa_supplicant.conf
-then
-  IP=${AP_IP:-"192.168.66.1"}
-  NET=$(echo -n "$IP" | sed -e 's/\.\{1,3\}$//')
-
-  # install required packages
-  log_progress "installing dnsmasq and hostapd"
-  apt-get -y --force-yes install dnsmasq hostapd
-
-  log_progress "configuring AP '$AP_SSID' with IP $IP"
-  # create udev rule
-  MAC="$(cat /sys/class/net/wlan0/address)"
-  cat <<- EOF > /etc/udev/rules.d/70-persistent-net.rules
-SUBSYSTEM=="ieee80211", ACTION=="add|change", ATTR{macaddress}=="$MAC", KERNEL=="phy0", \
-# Removing ap0 creation
-# RUN+="/sbin/iw phy phy0 interface add ap0 type __ap", \
-# RUN+="/bin/ip link set ap0 address $MAC"
-EOF
-
-  # configure dnsmasq
-  cat <<- EOF > /etc/dnsmasq.conf
-interface=lo,wlx9cefd5f6210e  # Using external adapter
-no-dhcp-interface=lo,wlan0
-bind-interfaces
-bogus-priv
-dhcp-range=${NET}.10,${NET}.254,12h
-# don't configure a default route, we're not a router
-dhcp-option=3
-EOF
-
-  # configure hostapd
-  cat <<- EOF > /etc/hostapd/hostapd.conf
-ctrl_interface=/var/run/hostapd
-ctrl_interface_group=0
-interface=wlx9cefd5f6210e  # Using external adapter
-driver=nl80211
-ssid=${AP_SSID}
-hw_mode=g
-# Removing explicit channel setting
-# channel=6
-wmm_enabled=0
-macaddr_acl=0
-auth_algs=1
-wpa=2
-wpa_passphrase=${AP_PASS}
-wpa_key_mgmt=WPA-PSK
-wpa_pairwise=TKIP CCMP
-rsn_pairwise=CCMP
-EOF
-  cat <<- EOF > /etc/default/hostapd
-DAEMON_CONF="/etc/hostapd/hostapd.conf"
-EOF
-
-  # define network interfaces. Note use of 'AP1' name, defined in wpa_supplication.conf below
-  cat <<- EOF > /etc/network/interfaces
-source-directory /etc/network/interfaces.d
-
-auto lo
-auto wlx9cefd5f6210e  # Using external adapter
-auto wlan0
-iface lo inet loopback
-
-allow-hotplug wlx9cefd5f6210e  # Using external adapter
-iface wlx9cefd5f6210e inet static  # Using external adapter
-    address ${IP}
-    netmask 255.255.255.0
-    hostapd /etc/hostapd/hostapd.conf
-
-allow-hotplug wlan0
-iface wlan0 inet manual
-    wpa-roam /etc/wpa_supplicant/wpa_supplicant.conf
-iface AP1 inet dhcp
-EOF
-
-  # For bullseye it is apparently necessary to explicitly disable wpa_supplicant for the ap0 interface
-  cat <<- EOF >> /etc/dhcpcd.conf
-# disable wpa_supplicant for the ap0 interface
-interface wlx9cefd5f6210e  # Using external adapter
-nohook wpa_supplicant
-EOF
-
-  if [ ! -L /var/lib/misc ]
-  then
-    if ! findmnt --mountpoint /mutable
-    then
-        mount /mutable
-    fi
-    mkdir -p /mutable/varlib
-    mv /var/lib/misc /mutable/varlib
-    ln -s /mutable/varlib/misc /var/lib/misc
-  fi
-
-  # update the host name to have the AP IP address, otherwise
-  # clients connected to the IP will get 127.0.0.1 when looking
-  # up the teslausb host name
-  sed -i -e "/^127.0.0.1\s*localhost/b; s/^127.0.0.1\(\s*.*\)/$IP\1/" /etc/hosts
-
-  # add ID string to wpa_supplicant
-  sed -i -e 's/}/  id_str="AP1"\n}/'  /etc/wpa_supplicant/wpa_supplicant.conf
-else
-  log_progress "AP mode already configured"
-fi
-
-}
