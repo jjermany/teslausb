@@ -1,12 +1,14 @@
 #!/bin/bash -eu
-# Final revised configure-ap.sh
-# If WIFI_ADAPTER=Y, then:
-#   - The client interface is assumed to be wlan1.
-#   - The AP interface is assumed to be wlan0 (used exclusively for AP mode).
-#   - Hostapd/dnsmasq are used to configure the AP and serve DHCP.
+# Final comprehensive configure-ap.sh
+# This script handles all scenarios:
+# 1. If WIFI_ADAPTER=Y, it uses hostapd/dnsmasq exclusively:
+#      - AP interface is wlan0 (used solely as AP).
+#      - Client interface is wlan1.
+# 2. Otherwise, if NetworkManager is enabled, it uses NM shared-mode (creates virtual interface ap0).
+# 3. Finally, if NetworkManager isn’t enabled, it falls back to hostapd/dnsmasq with a virtual interface.
 #
-# Otherwise, it falls back to the traditional NetworkManager shared mode
-# which creates a virtual interface (ap0) on the active client device.
+# The script flushes any preexisting IP on wlan0, creates necessary configuration files,
+# and ensures required directories exist.
 
 function log_progress () {
     if declare -F setup_progress > /dev/null; then
@@ -30,18 +32,20 @@ fi
 IP=${AP_IP:-"192.168.66.1"}
 
 #############################################
-# Dedicated AP Adapter Mode (Hostapd/dnsmasq) #
+# Dedicated AP Adapter Mode (Hostapd/dnsmasq)
 #############################################
 if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
-    log_progress "Dedicated AP adapter mode enabled; using hostapd/dnsmasq on wlan0 (AP) and wlan1 as client."
+    log_progress "Dedicated AP adapter mode enabled; using hostapd/dnsmasq with wlan0 (AP) and wlan1 (client)."
     
     AP_INTERFACE="wlan0"
     CLIENT_IFACE="wlan1"
-    
-    # Bring down the AP interface to configure it.
-    ip link set "$AP_INTERFACE" down || true
-    
-    # Configure a static IP for the AP interface by writing a simple interface file.
+
+    # Flush any existing IP configuration on wlan0 to avoid conflicts.
+    log_progress "Flushing existing IP on $AP_INTERFACE..."
+    ip addr flush dev "$AP_INTERFACE" || true
+
+    # Create a static IP configuration file for the AP interface.
+    mkdir -p /etc/network/interfaces.d
     cat > /etc/network/interfaces.d/hostapd_ap << EOF
 auto $AP_INTERFACE
 iface $AP_INTERFACE inet static
@@ -49,12 +53,18 @@ iface $AP_INTERFACE inet static
     netmask 255.255.255.0
 EOF
 
-    # Bring the AP interface up.
-    ip link set "$AP_INTERFACE" up
-    ifdown "$AP_INTERFACE" || true
-    ifup "$AP_INTERFACE" || true
+    # Bring up the AP interface.
+    log_progress "Bringing up $AP_INTERFACE..."
+    ip link set "$AP_INTERFACE" up || true
+    if command -v ifup >/dev/null 2>&1; then
+        ifup "$AP_INTERFACE" || log_progress "ifup failed, continuing..."
+    fi
 
-    # Write the hostapd configuration.
+    # Ensure the hostapd configuration directory exists.
+    mkdir -p /etc/hostapd
+
+    # Write hostapd configuration.
+    log_progress "Writing /etc/hostapd/hostapd.conf..."
     cat > /etc/hostapd/hostapd.conf << EOF
 interface=$AP_INTERFACE
 driver=nl80211
@@ -80,25 +90,29 @@ EOF
 DAEMON_CONF="/etc/hostapd/hostapd.conf"
 EOF
 
-    # Write the dnsmasq configuration to serve DHCP on the AP interface.
-    # This will give out IPs from 192.168.66.10 to 192.168.66.254.
+    # Write dnsmasq configuration to serve DHCP on the AP interface.
+    log_progress "Writing /etc/dnsmasq.conf..."
     cat > /etc/dnsmasq.conf << EOF
 interface=$AP_INTERFACE
 bind-interfaces
 dhcp-range=${IP%.*}.10,${IP%.*}.254,60m
 EOF
 
-    # Restart (or start) dnsmasq.
+    # Restart or start dnsmasq.
     if systemctl is-active --quiet dnsmasq; then
+        log_progress "Restarting dnsmasq..."
         systemctl restart dnsmasq
     else
+        log_progress "Starting dnsmasq..."
         systemctl start dnsmasq
     fi
 
-    # Restart (or start) hostapd.
+    # Restart or start hostapd.
     if systemctl is-active --quiet hostapd; then
+        log_progress "Restarting hostapd..."
         systemctl restart hostapd
     else
+        log_progress "Starting hostapd..."
         systemctl start hostapd
     fi
 
@@ -106,9 +120,9 @@ EOF
     exit 0
 fi
 
-##################################################
-# Fallback: NetworkManager Shared Mode (Virtual AP)#
-##################################################
+#########################################
+# Fallback: NetworkManager Shared Mode
+#########################################
 function nm_get_wifi_client_device () {
     for i in {1..5}; do
         WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -d: -f2)"
@@ -169,7 +183,9 @@ if systemctl --quiet is-enabled NetworkManager.service; then
     exit 0
 fi
 
-# Fallback branch if NetworkManager is not enabled.
+###############################
+# Final Fallback: No NM Enabled
+###############################
 if [ ! -e /etc/wpa_supplicant/wpa_supplicant.conf ]; then
     log_progress "No wpa_supplicant, skipping AP setup."
     exit 0
