@@ -4,11 +4,12 @@
 # 1. If WIFI_ADAPTER=Y, it uses hostapd/dnsmasq exclusively:
 #      - AP interface is wlan0 (used solely as AP).
 #      - Client interface is wlan1.
-# 2. Otherwise, if NetworkManager is enabled, it uses NM shared-mode (creates virtual interface ap0).
-# 3. Finally, if NetworkManager isn’t enabled, it falls back to hostapd/dnsmasq with a virtual interface.
+#      - It flushes existing IPs, writes static config, creates necessary directories,
+#        and writes hostapd/dnsmasq configuration.
+# 2. Otherwise, it falls back to the traditional NetworkManager shared-mode
+#    (creating a virtual interface ap0) or final fallback if NM is not enabled.
 #
-# The script flushes any preexisting IP on wlan0, creates necessary configuration files,
-# and ensures required directories exist.
+# It also checks if dnsmasq.service exists; if not, it starts dnsmasq manually.
 
 function log_progress () {
     if declare -F setup_progress > /dev/null; then
@@ -99,12 +100,17 @@ dhcp-range=${IP%.*}.10,${IP%.*}.254,60m
 EOF
 
     # Restart or start dnsmasq.
-    if systemctl is-active --quiet dnsmasq; then
-        log_progress "Restarting dnsmasq..."
-        systemctl restart dnsmasq
+    if systemctl list-unit-files | grep -q "^dnsmasq.service"; then
+        if systemctl is-active --quiet dnsmasq; then
+            log_progress "Restarting dnsmasq..."
+            systemctl restart dnsmasq
+        else
+            log_progress "Starting dnsmasq..."
+            systemctl start dnsmasq
+        fi
     else
-        log_progress "Starting dnsmasq..."
-        systemctl start dnsmasq
+        log_progress "dnsmasq.service not found; starting dnsmasq manually..."
+        dnsmasq --conf-file=/etc/dnsmasq.conf &
     fi
 
     # Restart or start hostapd.
