@@ -1,13 +1,15 @@
 #!/bin/bash -eu
-# Final configure-ap.sh for Dedicated AP Adapter Mode.
-# This script configures wlan0 as the Access Point using hostapd/dnsmasq
-# and assumes wlan1 is used as the Wi-Fi client.
+# Final configure-ap.sh for Dedicated AP Mode with internal Wi‑Fi as AP and external adapter for client.
+# When WIFI_ADAPTER=Y, this script configures:
+#   - wlan0 as the Access Point using hostapd/dnsmasq
+#   - The external adapter (CLIENT_IFACE) is left to serve as the client interface.
 #
-# It flushes any preexisting IP on wlan0, configures a static IP,
-# forces wlan0 into AP mode, writes hostapd and dnsmasq configuration,
-# and starts the necessary services.
-#
-# Requires that WIFI_ADAPTER=Y is set.
+# Required environment variables (set in teslausb_setup_variables.conf):
+#   WIFI_ADAPTER=Y
+#   AP_SSID (e.g., "TESLAUSB_WIFI")
+#   AP_PASS (e.g., "YourStrongPassword")
+#   AP_IP (e.g., "192.168.66.1")
+#   CLIENT_IFACE (e.g., "wlan2")
 
 function log_progress() {
     echo "configure-ap: $1"
@@ -32,14 +34,15 @@ fi
 
 IP=${AP_IP:-"192.168.66.1"}
 AP_INTERFACE="wlan0"
-CLIENT_IFACE="wlan1"
+CLIENT_IFACE="${CLIENT_IFACE:-wlan1}"
 
-###########################################
-# Dedicated AP Adapter Mode: Configure wlan0
-###########################################
-log_progress "Dedicated AP adapter mode enabled; setting $AP_INTERFACE as AP and $CLIENT_IFACE as client."
+#############################################
+# Dedicated AP Mode: Configure Internal Wi‑Fi (wlan0)
+#############################################
+log_progress "Dedicated AP adapter mode enabled."
+log_progress "Setting $AP_INTERFACE as AP and leaving $CLIENT_IFACE for client connectivity."
 
-# Flush any existing IP on wlan0.
+# Flush any existing IP configuration on wlan0.
 log_progress "Flushing existing IP on $AP_INTERFACE..."
 ip addr flush dev "$AP_INTERFACE" || true
 
@@ -52,29 +55,29 @@ iface $AP_INTERFACE inet static
     netmask 255.255.255.0
 EOF
 
-# Bring up wlan0.
+# Bring up the AP interface.
 log_progress "Bringing up $AP_INTERFACE..."
 ip link set "$AP_INTERFACE" up || true
 if command -v ifup >/dev/null 2>&1; then
-    ifup "$AP_INTERFACE" || log_progress "ifup failed, continuing..."
+    ifup "$AP_INTERFACE" || log_progress "ifup reported that $AP_INTERFACE is already configured, continuing..."
 fi
 
 # Wait for the interface to stabilize.
 log_progress "Waiting for $AP_INTERFACE to stabilize..."
 sleep 5
 
-# Force wlan0 into AP mode.
+# Force $AP_INTERFACE into AP mode.
 log_progress "Forcing $AP_INTERFACE into AP mode..."
-iw dev "$AP_INTERFACE" set type __ap || log_progress "Warning: Unable to force AP mode on $AP_INTERFACE."
+iw dev "$AP_INTERFACE" set type __ap || log_progress "Warning: could not force AP mode on $AP_INTERFACE, continuing anyway..."
 
-# Verify mode.
+# Verify that $AP_INTERFACE is in AP mode.
 log_progress "Verifying $AP_INTERFACE mode..."
 iw dev "$AP_INTERFACE" info
 
-###########################################
-# Configure hostapd and dnsmasq for wlan0
-###########################################
-# Ensure the hostapd directory exists.
+#############################################
+# Configure hostapd and dnsmasq for wlan0 (AP)
+#############################################
+# Ensure hostapd configuration directory exists.
 mkdir -p /etc/hostapd
 
 # Write hostapd configuration.
@@ -147,5 +150,6 @@ else
     hostapd /etc/hostapd/hostapd.conf &
 fi
 
-log_progress "AP configured on $AP_INTERFACE (SSID: $AP_SSID, IP: $IP). $CLIENT_IFACE remains as the client interface."
+log_progress "AP configured on $AP_INTERFACE (SSID: $AP_SSID, IP: $IP)."
+log_progress "$CLIENT_IFACE remains configured as the client interface."
 exit 0
