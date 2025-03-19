@@ -45,11 +45,19 @@ function nm_get_wifi_client_device () {
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
-  if ! iw dev ap0 info &> /dev/null
-  then
-    # create additional virtual interface for the wifi device
+  # Determine the AP interface to use: if AP_IFACE is set, use that; otherwise default to ap0.
+AP_INTERFACE="${AP_IFACE:-ap0}"
+
+if ! iw dev "$AP_INTERFACE" info &> /dev/null; then
+  if [ -z "${AP_IFACE+x}" ]; then
+    # No override set, create a virtual interface on the client device
     iw dev "$WLAN" interface add ap0 type __ap || return 1
+  else
+    log_progress "AP interface $AP_INTERFACE not available. Ensure it exists and is free."
+    return 1
   fi
+fi
+
 
   # turn off power savings for both interfaces since they use
   # the same underlying hardware, and we don't want one to go
