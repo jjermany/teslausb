@@ -1,7 +1,7 @@
 #!/bin/bash -eu
-# Final comprehensive configure-ap.sh with hostapd/dnsmasq installation and manual startup if needed.
-# If WIFI_ADAPTER=Y, then:
-#   - AP interface is assumed to be wlan0 (used exclusively for AP).
+# Final comprehensive configure-ap.sh with additional waiting and forced AP mode.
+# If WIFI_ADAPTER=Y then:
+#   - AP interface is assumed to be wlan0 (used solely as AP).
 #   - Client interface is assumed to be wlan1.
 #   - This branch uses hostapd/dnsmasq exclusively.
 #
@@ -38,7 +38,7 @@ if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
     AP_INTERFACE="wlan0"
     CLIENT_IFACE="wlan1"
     
-    # Flush any existing IP configuration on wlan0 to avoid conflicts.
+    # Flush any existing IP configuration on wlan0.
     log_progress "Flushing existing IP on $AP_INTERFACE..."
     ip addr flush dev "$AP_INTERFACE" || true
     
@@ -58,8 +58,17 @@ EOF
         ifup "$AP_INTERFACE" || log_progress "ifup failed, continuing..."
     fi
     
-    # Wait a few seconds to let the interface come up.
-    sleep 2
+    # Wait for a few seconds to ensure the interface is fully up.
+    log_progress "Waiting for $AP_INTERFACE to stabilize..."
+    sleep 5
+
+    # Force the interface into AP mode.
+    log_progress "Forcing $AP_INTERFACE into AP mode..."
+    iw dev "$AP_INTERFACE" set type __ap || log_progress "Warning: could not force AP mode on $AP_INTERFACE, continuing..."
+    
+    # Confirm the mode.
+    log_progress "Verifying $AP_INTERFACE mode..."
+    iw dev "$AP_INTERFACE" info
 
     # Ensure the hostapd configuration directory exists.
     mkdir -p /etc/hostapd
@@ -86,12 +95,12 @@ wpa_pairwise=TKIP CCMP
 rsn_pairwise=CCMP
 EOF
 
-    # Point hostapd to the configuration.
+    # Point hostapd to our configuration.
     cat > /etc/default/hostapd << EOF
 DAEMON_CONF="/etc/hostapd/hostapd.conf"
 EOF
 
-    # Write dnsmasq configuration to serve DHCP on the AP interface.
+    # Write dnsmasq configuration for DHCP on the AP interface.
     log_progress "Writing /etc/dnsmasq.conf..."
     cat > /etc/dnsmasq.conf << EOF
 interface=$AP_INTERFACE
