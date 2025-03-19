@@ -84,6 +84,8 @@ function nm_add_ap () {
   nmcli con modify TESLAUSB_AP ipv4.addr "$IP/24" || return 1
   nmcli con modify TESLAUSB_AP ipv4.method shared || return 1
   nmcli con modify TESLAUSB_AP ipv6.method disabled || return 1
+  nmcli con modify TESLAUSB_AP 802-11-wireless.band a || return 1
+  nmcli con modify TESLAUSB_AP 802-11-wireless.channel 36 || return 1
 
   # Create an if-up script.
   if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
