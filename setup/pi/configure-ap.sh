@@ -1,6 +1,9 @@
 #!/bin/bash -eu
-# based on https://blog.thewalr.us/2017/09/26/raspberry-pi-zero-w-simultaneous-ap-and-managed-mode-wifi/
-# Modified to use AP_IFACE for the AP instead of always creating a virtual interface.
+# Revised configure-ap.sh without AP_IFACE.
+# When WIFI_ADAPTER=Y, the script will assume:
+#   - Client device is wlan1.
+#   - AP interface is wlan0 (used exclusively for AP mode, not joining any networks).
+# Otherwise, it falls back to creating a virtual interface named ap0 on the active client.
 
 function log_progress () {
   if declare -F setup_progress > /dev/null; then
@@ -10,7 +13,7 @@ function log_progress () {
   fi
 }
 
-# Ensure required variables are set.
+# Check required AP variables.
 if [ -z "${AP_SSID+x}" ]; then
   log_progress "AP_SSID not set"
   exit 1
@@ -21,13 +24,18 @@ if [ -z "${AP_PASS+x}" ] || [ "$AP_PASS" = "password" ] || (( ${#AP_PASS} < 8 ))
   exit 1
 fi
 
-# Function: get the active Wi-Fi client device (exclude the AP interface)
+# Function to determine the Wi-Fi client device.
+# If WIFI_ADAPTER=Y then we assume client is wlan1.
 function nm_get_wifi_client_device () {
+  if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
+    WLAN="wlan1"
+    return 0
+  fi
+
   for i in {1..5}; do
-    # List active wireless connections excluding the one on AP_IFACE (or ap0 if not overridden)
-    WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":${AP_IFACE:-ap0}$" | cut -d: -f2)"
+    WLAN="$(nmcli -t -f TYPE,DEVICE c show --active | grep 802-11-wireless | grep -v ":ap0$" | cut -d: -f2)"
     if [ -n "$WLAN" ]; then
-      break;
+      break
     fi
     log_progress "Waiting for wifi interface to come back up"
     sleep 5
@@ -42,28 +50,32 @@ function nm_get_wifi_client_device () {
   fi
 }
 
+# Function to add the AP connection via NetworkManager.
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
-  # Determine the AP interface to use: if AP_IFACE is set, use that; otherwise default to ap0.
-  AP_INTERFACE="${AP_IFACE:-ap0}"
-
-  if ! iw dev "$AP_INTERFACE" info &> /dev/null; then
-    if [ -z "${AP_IFACE+x}" ]; then
-      # No override set, create a virtual interface on the client device
-      iw dev "$WLAN" interface add ap0 type __ap || return 1
-      AP_INTERFACE="ap0"
-    else
+  # Determine the AP interface.
+  # If WIFI_ADAPTER=Y then we use wlan0 as the dedicated AP interface.
+  if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
+    AP_INTERFACE="wlan0"
+    if ! iw dev "$AP_INTERFACE" info &> /dev/null; then
       log_progress "AP interface $AP_INTERFACE not available. Ensure it exists and is free."
       return 1
     fi
+  else
+    AP_INTERFACE="ap0"
+    if ! iw dev "$AP_INTERFACE" info &> /dev/null; then
+      # No dedicated AP interface; create a virtual interface on the client device.
+      iw dev "$WLAN" interface add ap0 type __ap || return 1
+      AP_INTERFACE="ap0"
+    fi
   fi
 
-  # Turn off power saving on both interfaces
+  # Turn off power saving on both the client and AP interfaces.
   iw "$WLAN" set power_save off || return 1
   iw "$AP_INTERFACE" set power_save off || return 1
 
-  # Delete any existing AP connection and create a new one using the chosen AP interface
+  # Delete any existing TESLAUSB_AP connection and create a new one using the chosen AP interface.
   nmcli con delete TESLAUSB_AP &> /dev/null || true
   nmcli con add type wifi ifname "$AP_INTERFACE" mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk || return 1
@@ -73,8 +85,18 @@ function nm_add_ap () {
   nmcli con modify TESLAUSB_AP ipv4.method shared || return 1
   nmcli con modify TESLAUSB_AP ipv6.method disabled || return 1
 
-  # Create an if-up script so that when the client device (WLAN) comes up, the AP is re-added.
-  cat > /etc/network/if-up.d/teslausb-ap << EOF
+  # Create an if-up script.
+  if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
+    # With dedicated adapter mode, simply bring up the AP connection when the client (wlan1) comes up.
+    cat > /etc/network/if-up.d/teslausb-ap << EOF
+#!/bin/bash
+if [ "\$IFACE" = "wlan1" ]; then
+  nmcli con up TESLAUSB_AP
+fi
+EOF
+  else
+    # Otherwise, recreate the virtual AP interface when the client device comes up.
+    cat > /etc/network/if-up.d/teslausb-ap << EOF
 #!/bin/bash
 if [ "\$IFACE" = "$WLAN" ]; then
   iw dev $WLAN interface add ${AP_INTERFACE} type __ap
@@ -83,6 +105,7 @@ if [ "\$IFACE" = "$WLAN" ]; then
   nmcli con up TESLAUSB_AP
 fi
 EOF
+  fi
   chmod a+x /etc/network/if-up.d/teslausb-ap || return 1
 
   return 0
@@ -103,7 +126,7 @@ if systemctl --quiet is-enabled NetworkManager.service; then
   exit 0
 fi
 
-# Fallback branch: use hostapd/dnsmasq if NetworkManager is not enabled.
+# Fallback branch: if NetworkManager is not enabled, use hostapd/dnsmasq.
 if [ ! -e /etc/wpa_supplicant/wpa_supplicant.conf ]; then
   log_progress "No wpa_supplicant, skipping AP setup."
   exit 0
