@@ -1,15 +1,12 @@
 #!/bin/bash -eu
-# Final comprehensive configure-ap.sh
-# This script handles all scenarios:
-# 1. If WIFI_ADAPTER=Y, it uses hostapd/dnsmasq exclusively:
-#      - AP interface is wlan0 (used solely as AP).
-#      - Client interface is wlan1.
-#      - It flushes existing IPs, writes static config, creates necessary directories,
-#        and writes hostapd/dnsmasq configuration.
-# 2. Otherwise, it falls back to the traditional NetworkManager shared-mode
-#    (creating a virtual interface ap0) or final fallback if NM is not enabled.
+# Final comprehensive configure-ap.sh with hostapd/dnsmasq installation and manual startup if needed.
+# If WIFI_ADAPTER=Y, then:
+#   - AP interface is assumed to be wlan0 (used exclusively for AP).
+#   - Client interface is assumed to be wlan1.
+#   - This branch uses hostapd/dnsmasq exclusively.
 #
-# It also checks if dnsmasq.service exists; if not, it starts dnsmasq manually.
+# Otherwise, it falls back to NetworkManager shared mode (creating virtual interface ap0)
+# or final fallback if NM isn’t enabled.
 
 function log_progress () {
     if declare -F setup_progress > /dev/null; then
@@ -40,11 +37,11 @@ if [ "${WIFI_ADAPTER:-N}" = "Y" ]; then
     
     AP_INTERFACE="wlan0"
     CLIENT_IFACE="wlan1"
-
+    
     # Flush any existing IP configuration on wlan0 to avoid conflicts.
     log_progress "Flushing existing IP on $AP_INTERFACE..."
     ip addr flush dev "$AP_INTERFACE" || true
-
+    
     # Create a static IP configuration file for the AP interface.
     mkdir -p /etc/network/interfaces.d
     cat > /etc/network/interfaces.d/hostapd_ap << EOF
@@ -60,6 +57,9 @@ EOF
     if command -v ifup >/dev/null 2>&1; then
         ifup "$AP_INTERFACE" || log_progress "ifup failed, continuing..."
     fi
+    
+    # Wait a few seconds to let the interface come up.
+    sleep 2
 
     # Ensure the hostapd configuration directory exists.
     mkdir -p /etc/hostapd
@@ -99,7 +99,17 @@ bind-interfaces
 dhcp-range=${IP%.*}.10,${IP%.*}.254,60m
 EOF
 
-    # Restart or start dnsmasq.
+    # Ensure hostapd and dnsmasq are installed.
+    if ! command -v hostapd >/dev/null 2>&1; then
+        log_progress "hostapd not found, installing..."
+        apt-get -y --force-yes install hostapd
+    fi
+    if ! command -v dnsmasq >/dev/null 2>&1; then
+        log_progress "dnsmasq not found, installing..."
+        apt-get -y --force-yes install dnsmasq
+    fi
+
+    # Start or restart dnsmasq.
     if systemctl list-unit-files | grep -q "^dnsmasq.service"; then
         if systemctl is-active --quiet dnsmasq; then
             log_progress "Restarting dnsmasq..."
@@ -113,13 +123,18 @@ EOF
         dnsmasq --conf-file=/etc/dnsmasq.conf &
     fi
 
-    # Restart or start hostapd.
-    if systemctl is-active --quiet hostapd; then
-        log_progress "Restarting hostapd..."
-        systemctl restart hostapd
+    # Start or restart hostapd.
+    if systemctl list-unit-files | grep -q "^hostapd.service"; then
+        if systemctl is-active --quiet hostapd; then
+            log_progress "Restarting hostapd..."
+            systemctl restart hostapd
+        else
+            log_progress "Starting hostapd..."
+            systemctl start hostapd
+        fi
     else
-        log_progress "Starting hostapd..."
-        systemctl start hostapd
+        log_progress "hostapd.service not found; starting hostapd manually..."
+        hostapd /etc/hostapd/hostapd.conf &
     fi
 
     log_progress "AP configured on $AP_INTERFACE (SSID: $AP_SSID, IP: $IP). Client interface remains on $CLIENT_IFACE."
