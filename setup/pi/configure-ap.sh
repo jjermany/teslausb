@@ -54,10 +54,16 @@ function nm_add_ap () {
   iw "$WLAN" set power_save off || return 1
   iw ap0 set power_save off || return 1
 
-  nmcli con delete TESLAUSB_AP &> /dev/null || true
+  # **NEW: Remove all existing AP connections to avoid duplicates**
+  log_progress "Removing existing TESLAUSB_AP connections..."
+  for uuid in $(nmcli -t -f UUID,NAME con show | grep TESLAUSB_AP | cut -d: -f1); do
+      sudo nmcli connection delete "$uuid"
+  done
+  sleep 2  # Give NetworkManager time to process deletions
+
   nmcli con add type wifi ifname ap0 mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
 
-  # Force 5GHz (WiFi 5)
+  # Force 5GHz (WiFi 5) with 20MHz width
   if ! nmcli con modify TESLAUSB_AP 802-11-wireless.band a
   then
     log_progress "Setting 5GHz failed. Restarting NetworkManager and retrying..."
@@ -117,8 +123,7 @@ then
 	driver=nl80211
 	ssid=${AP_SSID}
 	hw_mode=a
-	channel=auto
-	ht_capab=[HT40+]
+	channel=40
 	wmm_enabled=1
 	macaddr_acl=0
 	auth_algs=1
