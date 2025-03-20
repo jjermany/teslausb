@@ -1,7 +1,5 @@
 #!/bin/bash -eu
 
-# based on https://blog.thewalr.us/2017/09/26/raspberry-pi-zero-w-simultaneous-ap-and-managed-mode-wifi/
-
 function log_progress () {
   if declare -F setup_progress > /dev/null
   then
@@ -68,19 +66,6 @@ function nm_add_ap () {
     if ! nmcli con modify TESLAUSB_AP 802-11-wireless.band a
     then
       log_progress "STOP: Failed to configure AP with 5GHz."
-      exit 1
-    fi
-  fi
-
-  # Force 40MHz channel width
-  if ! nmcli con modify TESLAUSB_AP 802-11-wireless.channel-width 40mhz
-  then
-    log_progress "Setting 40MHz width failed. Restarting NetworkManager and retrying..."
-    systemctl restart NetworkManager
-    sleep 3
-    if ! nmcli con modify TESLAUSB_AP 802-11-wireless.channel-width 40mhz
-    then
-      log_progress "STOP: Failed to configure AP with 40MHz width."
       exit 1
     fi
   fi
