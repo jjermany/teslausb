@@ -59,7 +59,7 @@ function nm_add_ap () {
   nmcli con delete TESLAUSB_AP &> /dev/null || true
   nmcli con add type wifi ifname ap0 mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
 
-  # Try setting to 5GHz (WiFi 5)
+  # Force 5GHz (WiFi 5)
   if ! nmcli con modify TESLAUSB_AP 802-11-wireless.band a
   then
     log_progress "Setting 5GHz failed. Restarting NetworkManager and retrying..."
@@ -68,6 +68,19 @@ function nm_add_ap () {
     if ! nmcli con modify TESLAUSB_AP 802-11-wireless.band a
     then
       log_progress "STOP: Failed to configure AP with 5GHz."
+      exit 1
+    fi
+  fi
+
+  # Force 40MHz channel width
+  if ! nmcli con modify TESLAUSB_AP 802-11-wireless.channel-width 40mhz
+  then
+    log_progress "Setting 40MHz width failed. Restarting NetworkManager and retrying..."
+    systemctl restart NetworkManager
+    sleep 3
+    if ! nmcli con modify TESLAUSB_AP 802-11-wireless.channel-width 40mhz
+    then
+      log_progress "STOP: Failed to configure AP with 40MHz width."
       exit 1
     fi
   fi
@@ -81,7 +94,6 @@ function nm_add_ap () {
 
 if systemctl --quiet is-enabled NetworkManager.service
 then
-  # Ensure `iw` is installed for managing interfaces
   apt-get -y --force-yes install iw || return 1
   if ! nm_add_ap
   then
@@ -97,7 +109,6 @@ then
   exit 0
 fi
 
-# Fallback to `hostapd` if NetworkManager is unavailable
 if [ ! -e /etc/wpa_supplicant/wpa_supplicant.conf ]
 then
   log_progress "No wpa_supplicant, skipping AP setup."
@@ -109,13 +120,11 @@ then
   IP=${AP_IP:-"192.168.66.1"}
   NET=$(echo -n "$IP" | sed -e 's/\.[0-9]\{1,3\}$//')
 
-  # Install required packages
   log_progress "Installing dnsmasq and hostapd"
   apt-get -y --force-yes install dnsmasq hostapd
 
   log_progress "Configuring AP '$AP_SSID' with IP $IP"
   
-  # Configure `hostapd`
   cat <<- EOF > /etc/hostapd/hostapd.conf
 	ctrl_interface=/var/run/hostapd
 	ctrl_interface_group=0
@@ -123,6 +132,8 @@ then
 	driver=nl80211
 	ssid=${AP_SSID}
 	hw_mode=a
+	channel=auto
+	ht_capab=[HT40+]
 	wmm_enabled=1
 	macaddr_acl=0
 	auth_algs=1
@@ -133,7 +144,6 @@ then
 	rsn_pairwise=CCMP
 	EOF
 
-  # Update network configuration
   cat <<- EOF > /etc/network/interfaces
 	source-directory /etc/network/interfaces.d
 	auto lo
@@ -151,7 +161,6 @@ then
 	iface AP1 inet dhcp
 	EOF
 
-  # Ensure `ap0` is not managed by wpa_supplicant
   cat <<- EOF >> /etc/dhcpcd.conf
 	interface ap0
 	nohook wpa_supplicant
