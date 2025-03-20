@@ -1,39 +1,28 @@
 #!/bin/bash -eu
 
-# Function to disable Sentry Mode via TeslaFi API
-function set_sentry_mode {
-  local sentry_mode=$1
-  if [ -n "${TESLAFI_API_TOKEN:+x}" ]; then
-    response=$(curl -s -w "%{http_code}" -H "Authorization: Bearer $TESLAFI_API_TOKEN" \
-      "https://www.teslafi.com/feed.php?command=set_sentry_mode&sentryMode=$sentry_mode")
-    status_code="${response: -3}"
-    if [[ "$status_code" -ne 200 ]]; then
-      log "Error disabling Sentry Mode via TeslaFi. Status code: ${status_code}."
-    fi
-  else
-    log "ERROR: No TeslaFi API token available, unable to control Sentry Mode."
-  fi
-}
-
-# Check the stored Sentry Mode state
-if [ -f /tmp/sentry_state ]; then
-  sentry_state=$(cat /tmp/sentry_state)
-  rm -f /tmp/sentry_state
-
-  if [ "$sentry_state" == "sentry_enabled" ]; then
-    log "Disabling Sentry Mode via TeslaFi..."
-    set_sentry_mode false
-    /root/bin/send-push-message "$NOTIFICATION_TITLE:" "🚗 Sentry Mode disabled after archive/music sync completion." stop
-  elif [ "$sentry_state" == "sentry_already_enabled" ]; then
-    log "Sentry Mode was already enabled, leaving it on."
-  else
-    log "Warning: Unknown Sentry Mode state."
-  fi
+if [[ ( ( ! -x /root/bin/tesla_api.py) || ( ! -s /mutable/cache.json ) ) && ( -z "${TESLAFI_API_TOKEN:+x}" ) && ( -z "${TESSIE_API_TOKEN:+x}" ) ]]
+then
+  exit
 fi
 
-# Stop the background keep-awake process if running
-if [ -e /tmp/keep_awake_task_pid ]; then
+# If Sentry Mode was previously disabled, restore it to that state
+if [ -e /tmp/disable_sentry_after_archiving ]
+then
+  log "Restoring Sentry Mode to its previous state (disabled)..."
+  /root/bin/tesla_api.py disable_sentry_mode &>> "${LOG_FILE}"
+  rm -f /tmp/disable_sentry_after_archiving
+fi
+
+if [ -e /tmp/keep_awake_task_pid ]
+then
   log "Stopping wake car background task."
   kill "$(cat /tmp/keep_awake_task_pid)" || true
   rm -f /tmp/keep_awake_task_pid
+
+  if [[ ( -n "${TESLAFI_API_TOKEN:+x}" ) ]]
+  # TeslaFi Sleep command suspends its polling for the next 15 minutes (by default) to faciliate car's sleep.
+  then
+    curl -H "Authorization: Bearer $TESLAFI_API_TOKEN" "https://www.teslafi.com/feed.php?command=sleep"
+    log "also initiated TeslaFi Sleep Mode to give the car a chance to fall asleep." 
+  fi
 fi
