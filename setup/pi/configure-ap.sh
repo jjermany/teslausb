@@ -45,46 +45,38 @@ function nm_get_wifi_client_device () {
 function nm_add_ap () {
   nm_get_wifi_client_device || return 1
 
+  log_progress "Remounting filesystem as writable..."
+  mount -o remount,rw /
+
   if ! iw dev ap0 info &> /dev/null
   then
-    # Create additional virtual interface for AP
     iw dev "$WLAN" interface add ap0 type __ap || return 1
   fi
 
-  # Disable power saving for stable performance
   iw "$WLAN" set power_save off || return 1
   iw ap0 set power_save off || return 1
 
-  # Set up access point using NetworkManager
   nmcli con delete TESLAUSB_AP &> /dev/null || true
   nmcli con add type wifi ifname ap0 mode ap con-name TESLAUSB_AP ssid "$AP_SSID" || return 1
 
-  # Force 5GHz (WiFi 5) mode without setting a fixed channel
-  nmcli con modify TESLAUSB_AP 802-11-wireless.band a || return 1
+  # Try setting to 5GHz (WiFi 5)
+  if ! nmcli con modify TESLAUSB_AP 802-11-wireless.band a
+  then
+    log_progress "Setting 5GHz failed. Restarting NetworkManager and retrying..."
+    systemctl restart NetworkManager
+    sleep 3
+    if ! nmcli con modify TESLAUSB_AP 802-11-wireless.band a
+    then
+      log_progress "STOP: Failed to configure AP with 5GHz."
+      exit 1
+    fi
+  fi
 
-  # Set security options
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.key-mgmt wpa-psk || return 1
   nmcli con modify TESLAUSB_AP 802-11-wireless-security.psk "$AP_PASS" || return 1
-
-  # Configure IP settings
-  IP=${AP_IP:-"192.168.66.1"}
-  nmcli con modify TESLAUSB_AP ipv4.addr "$IP/24" || return 1
+  nmcli con modify TESLAUSB_AP ipv4.addr "${AP_IP:-192.168.66.1}/24" || return 1
   nmcli con modify TESLAUSB_AP ipv4.method shared || return 1
   nmcli con modify TESLAUSB_AP ipv6.method disabled || return 1
-
-  cat > /etc/network/if-up.d/teslausb-ap << EOF
-#!/bin/bash
-
-if [ "\$IFACE" = "$WLAN" ]
-then
-  iw dev $WLAN interface add ap0 type __ap
-  iw "$WLAN" set power_save off
-  iw ap0 set power_save off
-  nmcli con up TESLAUSB_AP
-fi
-
-EOF
-  chmod a+x /etc/network/if-up.d/teslausb-ap || return 1
 }
 
 if systemctl --quiet is-enabled NetworkManager.service
